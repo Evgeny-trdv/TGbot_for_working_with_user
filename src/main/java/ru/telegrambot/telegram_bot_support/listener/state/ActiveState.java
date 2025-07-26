@@ -1,5 +1,8 @@
 package ru.telegrambot.telegram_bot_support.listener.state;
 
+/**
+ * интерфейс активного состояния
+ */
 public interface ActiveState {
 
     /**
@@ -18,7 +21,7 @@ public interface ActiveState {
 
     /**
      * Метод очищает состояние пользователя
-     * @param chatId
+     * @param chatId id чата пользователя
      */
     void clearUserState(Long chatId);
 }

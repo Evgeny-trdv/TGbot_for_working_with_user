@@ -23,7 +23,10 @@ import java.util.List;
 
 import static ru.telegrambot.telegram_bot_support.constant.InformationConstant.*;
 
-
+/**
+ * Главный сервис -
+ * - отвечает за логику взаимодействия пользователя/администратора с телеграм ботом
+ */
 @Service
 public class TelegramBotUpdatesListener implements UpdatesListener {
 
@@ -51,6 +54,7 @@ public class TelegramBotUpdatesListener implements UpdatesListener {
         this.inlineButtonService = inlineButtonService;
     }
 
+    // сетап бота и кнопок
     @PostConstruct
     public void init() {
         telegramBot.setUpdatesListener(this);
@@ -61,6 +65,11 @@ public class TelegramBotUpdatesListener implements UpdatesListener {
         }
     }
 
+    /**
+     * метод обработки запросов (updates)
+     * @param updates available updates
+     * @return int UpdatesListener.CONFIRMED_UPDATES_ALL
+     */
     @Override
     public int process(List<Update> updates) {
         updates.forEach(update -> {
@@ -68,7 +77,7 @@ public class TelegramBotUpdatesListener implements UpdatesListener {
 
             if (update.callbackQuery() != null) {
                 handleCallbackQuery(update);
-                return; // Выходим, так как это отдельный тип обновления
+                return;
             }
 
             if (update.message() != null) {
@@ -83,25 +92,23 @@ public class TelegramBotUpdatesListener implements UpdatesListener {
     private void handleMessage(Update update) {
         Message messageChat = update.message();
 
-        /**
-         * часть кода, отвечающего за пересылку сообщения с фотографией(чек оплаты)
-         * от пользователя к администратору для дальнейшей проверки оригинальности фотографии
-         */
+        // часть кода, отвечающая за пересылку сообщения с фотографией(чек оплаты)
+        // от пользователя к администратору для дальнейшей проверки оригинальности фотографии
         if (messageChat.photo() != null && userActiveState.getUserState(update.message().chat().id()) != null) {
             ForwardMessage forwardMessage = forwarderPhotoToVerifyService.forwardMessageToAdmin(
                     update.message().chat().id(),
                     update.message().messageId());
             senderMessageService.sendForwardMessage(forwardMessage);
 
-            SendMessage textMessageToAdminForCheckingPayment = preparerMessageService
-                    .getTextMessageToAdminForCheckingPayment(
+            SendMessage textMessageToAdminForCheckingPayment =
+                    preparerMessageService.getTextMessageToAdminForCheckingPayment(
                             update.message().chat().id(),
                             update.message().chat().firstName(),
                             update.message().from().username());
             senderMessageService.sendMessage(textMessageToAdminForCheckingPayment);
 
-            SendMessage sendTextMessageToUserAboutGettingPhoto = preparerMessageService.
-                    getSendTextMessageToUserAboutGettingPhoto(
+            SendMessage sendTextMessageToUserAboutGettingPhoto =
+                    preparerMessageService.getSendTextMessageToUserAboutGettingPhoto(
                             update.message().chat().id());
             senderMessageService.sendMessage(sendTextMessageToUserAboutGettingPhoto);
 
@@ -111,24 +118,26 @@ public class TelegramBotUpdatesListener implements UpdatesListener {
             return;
         }
 
+        // часть кода, отвечающая за обработку текста
         if (messageChat.text() != null) {
             String adminState = adminActiveState.getUserState(ADMIN_CHAT_ID);
 
+            // событие для администратора для проверки фотографии от пользователя
             if (adminState != null
                     && messageChat.text().equalsIgnoreCase("да")
                     && messageChat.replyToMessage() != null
                     && !(forwarderPhotoToVerifyService.forwardMap.isEmpty())) {
-                // Если бот ожидает ввод от пользователя
-                    /**
-                     * метод для работы логики Данила в момент получения фотографии
-                     * необходим ответ от Данила для дальнейшей записи в БД юзера
-                     */
-                for (Long l : forwarderPhotoToVerifyService.listWaiting) {
 
-                    addingUserToDataBaseService.handleUserInput(adminState, l); //добавление пользователя в БД после подтверждения оплаты + сообщение об этом
-                    telegramBot.execute(preparerMessageService.getSendTextMessageToUserAboutSuccessfulVerifying(l)); //сообщение пользователю о успешной проверки скриншота об оплате
-                    forwarderPhotoToVerifyService.forwardMap.remove(l);
-                    forwarderPhotoToVerifyService.listWaiting.remove(l);
+                // логика параллельной обработки полученых фотографий (1 и более) для избежания потери данных
+                for (Long chatId : forwarderPhotoToVerifyService.listWaiting) {
+
+                    //добавление пользователя в БД после подтверждения оплаты + сообщение об этом
+                    addingUserToDataBaseService.handleUserInput(adminState, chatId);
+
+                    //сообщение пользователю о успешной проверки скриншота об оплате
+                    telegramBot.execute(preparerMessageService.getSendTextMessageToUserAboutSuccessfulVerifying(chatId));
+                    forwarderPhotoToVerifyService.forwardMap.remove(chatId);
+                    forwarderPhotoToVerifyService.listWaiting.remove(chatId);
                 }
 
                 if (forwarderPhotoToVerifyService.forwardMap.isEmpty()) {
@@ -137,55 +146,40 @@ public class TelegramBotUpdatesListener implements UpdatesListener {
                     return;
             }
 
-            /**
-             * часть кода, отвечющее за активацию бота
-             * по команде /start с текстом, кнопками и фотографией
-             */
+            // событие активации бота при помощи команды /start
             if (update.message().text().equals("/start")) {
 
                 InlineKeyboardMarkup keyboardMarkup = inlineButtonService.getButtonsForStart();
 
-                SendPhoto startPhotoMessage = preparerMessageService.getStartPhotoMessage(
-                        update.message().chat().id()
-                ).replyMarkup(keyboardMarkup);
+                SendPhoto startPhotoMessage = preparerMessageService
+                        .getStartPhotoMessage(update.message().chat().id())
+                        .replyMarkup(keyboardMarkup);
+
                 senderMessageService.sendPhoto(startPhotoMessage);
-
-                /*telegramBot.execute(preparerMessageService.getStartPhotoMessage(
-                        update.message().chat().id(),
-                        update.message().from().firstName()
-                ).replyMarkup(keyboardMarkup));*/
             }
-
         }
     }
 
+    // событие обрабатывающий запроса на обратный вызов
     private void handleCallbackQuery(Update update) {
         try {
-            // 1. Получаем callback query
+            // 1. Получаем запрос обратного вызова (действие пользователя в боте)
             CallbackQuery callbackQuery = update.callbackQuery();
             if (callbackQuery == null || callbackQuery.message() == null) {
-                //logger.warn("Invalid callback query");
                 return;
             }
 
-            // 2. Извлекаем данные
+            // 2. Извлекаем данные из запроса обратного вызова (действие пользователя в боте)
             String callbackData = callbackQuery.data();
             Message message = callbackQuery.message();
             long chatId = message.chat().id();
             int messageId = message.messageId();
-            String callbackId = callbackQuery.id();
 
-            //logger.info("Processing callback: {}", callbackData);
-            //logger.info("Handling callback: {} in chat {}", callbackData, chatId);
-
-            // 3. Отвечаем на callback (убираем "часики")
-            //telegramBot.execute(new AnswerCallbackQuery(callbackId));
-
-            // 4. Создаем клавиатуру
+            // 3. Создаем клавиатуру и текст
             InlineKeyboardMarkup keyboardMarkup;
             String responseText;
 
-            // 5. Обрабатываем разные варианты callbackData
+            // 4. Обрабатываем разные варианты обратного вызова для предоставления данных
             switch (callbackData) {
                 case "list":
                     responseText = LIST_CHANNELS;
@@ -206,7 +200,6 @@ public class TelegramBotUpdatesListener implements UpdatesListener {
 
                 case "back":
                     responseText = TEXT_INITIAL;
-
                     keyboardMarkup = inlineButtonService.getButtonsForStart();
                     break;
 
@@ -215,14 +208,14 @@ public class TelegramBotUpdatesListener implements UpdatesListener {
                     keyboardMarkup = null;
             }
 
-            // 6. Создаем и отправляем сообщение
+            // 5. Создаем и отправляем обновленное сообщение (текст + кнопки)
             EditMessageCaption editMessageCaption = new EditMessageCaption(chatId, messageId).caption(responseText).parseMode(ParseMode.HTML);
-            //EditMessageText editMessage = new EditMessageText(chatId, messageId, responseText);
             if (keyboardMarkup != null) {
                 editMessageCaption.replyMarkup(keyboardMarkup);
             }
 
             logger.info("Sending edit for message {} in chat {}", messageId, chatId);
+
             BaseResponse response = telegramBot.execute(editMessageCaption);
 
             if (!response.isOk()) {
@@ -234,6 +227,7 @@ public class TelegramBotUpdatesListener implements UpdatesListener {
         }
     }
 
+    //сетап команд бота по умолчанию
     private void setCommands() throws TelegramException {
         BotCommand commandFirst = new BotCommand("/start", "Запуск бота");
         BotCommand commandSecond = new BotCommand("/help", "nothing");

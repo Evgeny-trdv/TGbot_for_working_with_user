@@ -5,6 +5,9 @@ import ru.telegrambot.telegram_bot_support.listener.state.ActiveState;
 
 import java.util.concurrent.ConcurrentHashMap;
 
+/**
+ * Компонент работы с состоянием администратора
+ */
 @Component
 public class AdminActiveState implements ActiveState {
     private final ConcurrentHashMap<Long, String> adminStates = new ConcurrentHashMap<>();
